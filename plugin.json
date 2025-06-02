@@ -3,7 +3,7 @@
   "ActionKeyword": "fwd",
   "Name": "HTTP Query Forwarder",
   "Description": "Forwards queries to an HTTP server and displays results.",
-  "Author": "Your Name/AI",
+  "Author": "idanyas",
   "Version": "1.0.0",
   "Language": "python",
   "Website": "https://github.com/your-repo/Flow.Launcher.Plugin.HttpForwarder",
