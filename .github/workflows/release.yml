@@ -59,8 +59,8 @@ jobs:
           echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
           zip -r "${ZIP_FILENAME}" . \
             -x '.git/*' '.github/*' '.vscode/*' '*.pyc' \
-            '__pycache__/*' 'dev_server/*' '*.zip' 'requirements.txt' \
-            '.project.json' 'plugin.json' # Explicitly exclude if they might exist
+            '__pycache__/*' 'dev_server/*' '*.zip' \
+            '.project.json'
 
       - name: Publish Pre-Release to GitHub
         uses: softprops/action-gh-release@v2
