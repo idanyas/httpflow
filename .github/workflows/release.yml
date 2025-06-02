@@ -2,32 +2,32 @@ name: Publish Plugin Release
 
 on:
   push:
-    branches: [main]
+    branches: ["**"] # MODIFIED: Trigger on pushes to ANY branch
     tags: ["v*"] # Trigger on tags starting with 'v' (e.g., v1.0.0, v0.2.1-beta)
     paths-ignore:
       - ".github/workflows/**"
       - "README.md"
       - ".gitignore"
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch: # Allows manual triggering (will run publish-prerelease job)
 
 jobs:
-  # Job to build and publish a pre-release for main branch commits or manual dispatch
+  # Job to build and publish a pre-release for any branch commit or manual dispatch
   publish-prerelease:
     # Only run for:
-    # 1. Pushes to the main branch (that are not also tag pushes)
-    # 2. Manual workflow_dispatch events (these typically run against the default branch, main)
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    # 1. Pushes to ANY branch (github.ref will start with 'refs/heads/')
+    # 2. Manual workflow_dispatch events (these typically run against the default branch)
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to create a release and upload artifacts
-    outputs: # Define outputs for this job if needed by other jobs (not used here but good practice)
+    outputs:
       prerelease_tag: ${{ steps.generate_prerelease_tag.outputs.tag_name }}
       zip_filename: ${{ env.ZIP_FILENAME }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches all history for accurate SHA and potentially git describe if used
+          fetch-depth: 0 # Fetches all history for accurate SHA
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,37 +44,46 @@ jobs:
 
       - name: Generate Pre-release Tag Name
         id: generate_prerelease_tag
-        run: echo "tag_name=dev-build-${{ steps.short_sha.outputs.sha }}" >> $GITHUB_OUTPUT
+        # For workflow_dispatch, github.ref_name might be empty if triggered manually not against a specific branch.
+        # Default to 'manual' or use default branch name if needed, but SHA is primary identifier.
+        # For push events, github.ref_name is the branch name.
+        run: echo "tag_name=dev-build-${{ github.ref_name }}-${{ steps.short_sha.outputs.sha }}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies into lib folder
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -t ./lib
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt -t ./lib
+          else
+            echo "requirements.txt not found, skipping dependency installation into lib."
+            mkdir -p ./lib # Ensure lib directory exists even if empty
+          fi
 
       - name: Create Plugin Zip Archive for Pre-release
         run: |
           PLUGIN_NAME_SANITIZED=$(echo "${{ steps.repo_name.outputs.name }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
-          # For pre-releases, the zip can be simpler, or include the SHA
-          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-prerelease-${{ steps.short_sha.outputs.sha }}.zip"
+          # Include branch name (if available) and SHA in the zip filename for clarity
+          BRANCH_NAME_PART=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/\//-/g') # Sanitize branch name
+          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-prerelease-${BRANCH_NAME_PART}-${{ steps.short_sha.outputs.sha }}.zip"
           echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
           zip -r "${ZIP_FILENAME}" . \
             -x '.git/*' '.github/*' '.vscode/*' '*.pyc' \
             '__pycache__/*' 'dev_server/*' '*.zip' \
-            '.project.json'
+            '.project.json' 'poetry.lock' 'pyproject.toml' # Added poetry/pyproject exclusions
 
       - name: Publish Pre-Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: "${{ env.ZIP_FILENAME }}"
           tag_name: ${{ steps.generate_prerelease_tag.outputs.tag_name }}
-          name: "Dev Build: ${{ steps.repo_name.outputs.name }} (${{ steps.short_sha.outputs.sha }})"
+          name: "Dev Build: ${{ steps.repo_name.outputs.name }} (${{ github.ref_name }}@${{ steps.short_sha.outputs.sha }})"
           body: |
             Automated development build of ${{ steps.repo_name.outputs.name }}.
             Commit: ${{ github.sha }}
-            Branch/Ref: ${{ github.ref_name }}
+            Branch/Ref: ${{ github.ref_name }} (Trigger: ${{ github.event_name }})
             This is a pre-release build for testing purposes.
-          prerelease: true
-          # draft: false # Set to true if you want to manually publish after creation
+          prerelease: true # IMPORTANT: Marks this as a pre-release
+          # draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -91,7 +100,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        # fetch-depth: 0 not strictly needed here as we operate on the tag commit
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -106,38 +114,39 @@ jobs:
         id: version_from_tag
         run: |
           TAG_NAME="${{ github.ref_name }}" # e.g., v1.0.0
-          # Optionally strip 'v' prefix if your zip/display doesn't need it for the version part
-          # VERSION_NUMBER="${TAG_NAME#v}"
-          # echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
           echo "tag=${TAG_NAME}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies into lib folder
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -t ./lib
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt -t ./lib
+          else
+            echo "requirements.txt not found, skipping dependency installation into lib."
+            mkdir -p ./lib # Ensure lib directory exists even if empty
+          fi
 
       - name: Create Plugin Zip Archive for Release
         run: |
           PLUGIN_NAME_SANITIZED=$(echo "${{ steps.repo_name.outputs.name }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
-          # Use the full Git tag for the version part of the zip filename
           VERSION_FROM_TAG="${{ steps.version_from_tag.outputs.tag }}" # e.g., v1.0.0
           ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-${VERSION_FROM_TAG}.zip"
           echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
           zip -r "${ZIP_FILENAME}" . \
             -x '.git/*' '.github/*' '.vscode/*' '*.pyc' \
             '__pycache__/*' 'dev_server/*' '*.zip' \
-            '.project.json'
+            '.project.json' 'poetry.lock' 'pyproject.toml' # Added poetry/pyproject exclusions
 
       - name: Publish Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: "${{ env.ZIP_FILENAME }}"
-          tag_name: ${{ steps.version_from_tag.outputs.tag }} # Use the Git tag that triggered the workflow
-          name: "Release ${{ steps.version_from_tag.outputs.tag }} - ${{ steps.repo_name.outputs.name }}"
+          tag_name: ${{ steps.version_from_tag.outputs.tag }}
+          name: "${{ steps.version_from_tag.outputs.tag }}"
           body: |
             Automated release of ${{ steps.repo_name.outputs.name }} version ${{ steps.version_from_tag.outputs.tag }}.
             See CHANGELOG.md or commit history for details.
-          prerelease: false
+          prerelease: false # IMPORTANT: Marks this as a full release
           # draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
