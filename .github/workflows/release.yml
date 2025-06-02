@@ -64,7 +64,7 @@ jobs:
           PLUGIN_NAME_SANITIZED=$(echo "${{ steps.repo_name.outputs.name }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
           # Include branch name (if available) and SHA in the zip filename for clarity
           BRANCH_NAME_PART=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/\//-/g') # Sanitize branch name
-          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-prerelease-${BRANCH_NAME_PART}-${{ steps.short_sha.outputs.sha }}.zip"
+          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}.zip"
           echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
           zip -r "${ZIP_FILENAME}" . \
             -x '.git/*' '.github/*' '.vscode/*' '*.pyc' \
@@ -130,7 +130,7 @@ jobs:
         run: |
           PLUGIN_NAME_SANITIZED=$(echo "${{ steps.repo_name.outputs.name }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
           VERSION_FROM_TAG="${{ steps.version_from_tag.outputs.tag }}" # e.g., v1.0.0
-          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-${VERSION_FROM_TAG}.zip"
+          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}.zip"
           echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
           zip -r "${ZIP_FILENAME}" . \
             -x '.git/*' '.github/*' '.vscode/*' '*.pyc' \
