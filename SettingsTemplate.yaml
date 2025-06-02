@@ -1,0 +1,12 @@
+#$schema: https://www.flowlauncher.com/schemas/settings-template.schema.json
+body:
+  - type: textBlock
+    attributes:
+      description: |
+        Plugin configuration has been moved to an external YAML file.
+        Please edit the following file to configure the HTTP Query Forwarder:
+
+        [User's Documents Folder]\httpflow\settings.yaml
+
+        If the file or 'httpflow' directory does not exist, the plugin will attempt
+        to create it with default settings when first run.

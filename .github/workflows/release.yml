@@ -1,0 +1,145 @@
+name: Publish Plugin Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"] # Trigger on tags starting with 'v'
+    paths-ignore:
+      - ".github/workflows/**"
+      - "README.md"
+      - ".gitignore"
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  # Job to build and publish a pre-release for main branch commits or manual dispatch
+  publish-prerelease:
+    # Only run for:
+    # 1. Pushes to the main branch (that are not also tag pushes)
+    # 2. Manual workflow_dispatch events (these typically run against the default branch, main)
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create a release and upload artifacts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches all history so tags are available if needed, though not strictly for this job
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Get plugin version from plugin.json
+        id: version
+        uses: notiz-dev/github-action-json-property@release
+        with:
+          path: "plugin.json"
+          prop_path: "Version"
+
+      - name: Get plugin name from plugin.json
+        id: pluginname
+        uses: notiz-dev/github-action-json-property@release
+        with:
+          path: "plugin.json"
+          prop_path: "Name"
+
+      - name: Install dependencies into lib folder
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -t ./lib
+
+      - name: Create Plugin Zip Archive
+        id: create_zip # Give this step an id to access its outputs if needed
+        run: |
+          PLUGIN_NAME_SANITIZED=$(echo "${{ steps.pluginname.outputs.prop }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}.zip"
+          echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
+          zip -r "${ZIP_FILENAME}" . -x '*.git*' '.github/*' '.vscode/*' '*.pyc' '__pycache__/*' 'dev_server/*' '*.zip' 'requirements.txt' # Exclude requirements.txt from zip if deps are in /lib
+
+      - name: Get Short SHA
+        id: short_sha
+        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Publish Pre-Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "${{ env.ZIP_FILENAME }}"
+          # Create a unique tag for the pre-release
+          tag_name: "v${{steps.version.outputs.prop}}-dev.${{ steps.short_sha.outputs.sha }}"
+          name: "Pre-release v${{steps.version.outputs.prop}} (dev build ${{ steps.short_sha.outputs.sha }})"
+          body: "Automated pre-release of ${{ steps.pluginname.outputs.prop }} version v${{steps.version.outputs.prop}} from commit ${{ github.sha }}. This is a development build."
+          prerelease: true
+          # draft: false # Set to true if you want to manually publish after creation
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job to build and publish a full release for tags
+  publish-release:
+    # Only run for tag pushes
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create a release and upload artifacts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # No need to fetch-depth: 0 here as the tag push itself provides the ref
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Get plugin version from plugin.json
+        id: version
+        uses: notiz-dev/github-action-json-property@release
+        with:
+          path: "plugin.json"
+          prop_path: "Version"
+
+      - name: Get plugin name from plugin.json
+        id: pluginname
+        uses: notiz-dev/github-action-json-property@release
+        with:
+          path: "plugin.json"
+          prop_path: "Name"
+
+      - name: Verify tag matches plugin.json version
+        run: |
+          TAG_VERSION="${{ github.ref_name }}" # e.g., v1.0.0
+          JSON_VERSION="v${{ steps.version.outputs.prop }}" # e.g., v1.0.0 (after prepending 'v')
+          echo "Git Tag: $TAG_VERSION"
+          echo "plugin.json Version: $JSON_VERSION"
+          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
+            echo "Error: Git tag '$TAG_VERSION' does not match plugin.json version '$JSON_VERSION'."
+            exit 1
+          fi
+
+      - name: Install dependencies into lib folder
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -t ./lib
+
+      - name: Create Plugin Zip Archive
+        id: create_zip # Give this step an id to access its outputs if needed
+        run: |
+          PLUGIN_NAME_SANITIZED=$(echo "${{ steps.pluginname.outputs.prop }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          # Use the version from the tag for the zip file name in a release
+          VERSION_FROM_TAG="${{ github.ref_name }}" # e.g., v1.0.0
+          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-${VERSION_FROM_TAG}.zip"
+          echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
+          zip -r "${ZIP_FILENAME}" . -x '*.git*' '.github/*' '.vscode/*' '*.pyc' '__pycache__/*' 'dev_server/*' '*.zip' 'requirements.txt'
+
+      - name: Publish Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "${{ env.ZIP_FILENAME }}"
+          tag_name: ${{ github.ref_name }} # Use the Git tag that triggered the workflow
+          name: "Release ${{ github.ref_name }} - ${{ steps.pluginname.outputs.prop }}"
+          body: "Automated release of ${{ steps.pluginname.outputs.prop }} version ${{ github.ref_name }}."
+          prerelease: false
+          # draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

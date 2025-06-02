@@ -1,0 +1,12 @@
+{
+  "ID": "A7B4C9D8-E1F2-3A4B-5C6D-7E8F9A0B1C2D",
+  "ActionKeyword": "fwd",
+  "Name": "HTTP Query Forwarder",
+  "Description": "Forwards queries to an HTTP server and displays results.",
+  "Author": "Your Name/AI",
+  "Version": "1.0.0",
+  "Language": "python",
+  "Website": "https://github.com/your-repo/Flow.Launcher.Plugin.HttpForwarder",
+  "IcoPath": "Images\\icon.png",
+  "ExecuteFileName": "main.py"
+}
