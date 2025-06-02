@@ -3,7 +3,7 @@ name: Publish Plugin Release
 on:
   push:
     branches: [main]
-    tags: ["v*"] # Trigger on tags starting with 'v'
+    tags: ["v*"] # Trigger on tags starting with 'v' (e.g., v1.0.0, v0.2.1-beta)
     paths-ignore:
       - ".github/workflows/**"
       - "README.md"
@@ -20,56 +20,59 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to create a release and upload artifacts
+    outputs: # Define outputs for this job if needed by other jobs (not used here but good practice)
+      prerelease_tag: ${{ steps.generate_prerelease_tag.outputs.tag_name }}
+      zip_filename: ${{ env.ZIP_FILENAME }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches all history so tags are available if needed, though not strictly for this job
+          fetch-depth: 0 # Fetches all history for accurate SHA and potentially git describe if used
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.9"
 
-      - name: Get plugin version from plugin.json
-        id: version
-        uses: notiz-dev/github-action-json-property@release
-        with:
-          path: "plugin.json"
-          prop_path: "Version"
+      - name: Get Repository Name (as Plugin Name)
+        id: repo_name
+        run: echo "name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
 
-      - name: Get plugin name from plugin.json
-        id: pluginname
-        uses: notiz-dev/github-action-json-property@release
-        with:
-          path: "plugin.json"
-          prop_path: "Name"
+      - name: Get Short SHA
+        id: short_sha
+        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Generate Pre-release Tag Name
+        id: generate_prerelease_tag
+        run: echo "tag_name=dev-build-${{ steps.short_sha.outputs.sha }}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies into lib folder
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -t ./lib
 
-      - name: Create Plugin Zip Archive
-        id: create_zip # Give this step an id to access its outputs if needed
+      - name: Create Plugin Zip Archive for Pre-release
         run: |
-          PLUGIN_NAME_SANITIZED=$(echo "${{ steps.pluginname.outputs.prop }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
-          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}.zip"
+          PLUGIN_NAME_SANITIZED=$(echo "${{ steps.repo_name.outputs.name }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          # For pre-releases, the zip can be simpler, or include the SHA
+          ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-prerelease-${{ steps.short_sha.outputs.sha }}.zip"
           echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
-          zip -r "${ZIP_FILENAME}" . -x '*.git*' '.github/*' '.vscode/*' '*.pyc' '__pycache__/*' 'dev_server/*' '*.zip' 'requirements.txt' # Exclude requirements.txt from zip if deps are in /lib
-
-      - name: Get Short SHA
-        id: short_sha
-        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+          zip -r "${ZIP_FILENAME}" . \
+            -x '.git/*' '.github/*' '.vscode/*' '*.pyc' \
+            '__pycache__/*' 'dev_server/*' '*.zip' 'requirements.txt' \
+            '.project.json' 'plugin.json' # Explicitly exclude if they might exist
 
       - name: Publish Pre-Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: "${{ env.ZIP_FILENAME }}"
-          # Create a unique tag for the pre-release
-          tag_name: "v${{steps.version.outputs.prop}}-dev.${{ steps.short_sha.outputs.sha }}"
-          name: "Pre-release v${{steps.version.outputs.prop}} (dev build ${{ steps.short_sha.outputs.sha }})"
-          body: "Automated pre-release of ${{ steps.pluginname.outputs.prop }} version v${{steps.version.outputs.prop}} from commit ${{ github.sha }}. This is a development build."
+          tag_name: ${{ steps.generate_prerelease_tag.outputs.tag_name }}
+          name: "Dev Build: ${{ steps.repo_name.outputs.name }} (${{ steps.short_sha.outputs.sha }})"
+          body: |
+            Automated development build of ${{ steps.repo_name.outputs.name }}.
+            Commit: ${{ github.sha }}
+            Branch/Ref: ${{ github.ref_name }}
+            This is a pre-release build for testing purposes.
           prerelease: true
           # draft: false # Set to true if you want to manually publish after creation
         env:
@@ -77,68 +80,63 @@ jobs:
 
   # Job to build and publish a full release for tags
   publish-release:
-    # Only run for tag pushes
+    # Only run for tag pushes starting with 'v'
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to create a release and upload artifacts
+    outputs:
+      release_tag: ${{ github.ref_name }}
+      zip_filename: ${{ env.ZIP_FILENAME }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        # No need to fetch-depth: 0 here as the tag push itself provides the ref
+        # fetch-depth: 0 not strictly needed here as we operate on the tag commit
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.9"
 
-      - name: Get plugin version from plugin.json
-        id: version
-        uses: notiz-dev/github-action-json-property@release
-        with:
-          path: "plugin.json"
-          prop_path: "Version"
+      - name: Get Repository Name (as Plugin Name)
+        id: repo_name
+        run: echo "name=${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
 
-      - name: Get plugin name from plugin.json
-        id: pluginname
-        uses: notiz-dev/github-action-json-property@release
-        with:
-          path: "plugin.json"
-          prop_path: "Name"
-
-      - name: Verify tag matches plugin.json version
+      - name: Get Version from Tag
+        id: version_from_tag
         run: |
-          TAG_VERSION="${{ github.ref_name }}" # e.g., v1.0.0
-          JSON_VERSION="v${{ steps.version.outputs.prop }}" # e.g., v1.0.0 (after prepending 'v')
-          echo "Git Tag: $TAG_VERSION"
-          echo "plugin.json Version: $JSON_VERSION"
-          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
-            echo "Error: Git tag '$TAG_VERSION' does not match plugin.json version '$JSON_VERSION'."
-            exit 1
-          fi
+          TAG_NAME="${{ github.ref_name }}" # e.g., v1.0.0
+          # Optionally strip 'v' prefix if your zip/display doesn't need it for the version part
+          # VERSION_NUMBER="${TAG_NAME#v}"
+          # echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG_NAME}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies into lib folder
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -t ./lib
 
-      - name: Create Plugin Zip Archive
-        id: create_zip # Give this step an id to access its outputs if needed
+      - name: Create Plugin Zip Archive for Release
         run: |
-          PLUGIN_NAME_SANITIZED=$(echo "${{ steps.pluginname.outputs.prop }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
-          # Use the version from the tag for the zip file name in a release
-          VERSION_FROM_TAG="${{ github.ref_name }}" # e.g., v1.0.0
+          PLUGIN_NAME_SANITIZED=$(echo "${{ steps.repo_name.outputs.name }}" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          # Use the full Git tag for the version part of the zip filename
+          VERSION_FROM_TAG="${{ steps.version_from_tag.outputs.tag }}" # e.g., v1.0.0
           ZIP_FILENAME="${PLUGIN_NAME_SANITIZED}-${VERSION_FROM_TAG}.zip"
           echo "ZIP_FILENAME=${ZIP_FILENAME}" >> $GITHUB_ENV
-          zip -r "${ZIP_FILENAME}" . -x '*.git*' '.github/*' '.vscode/*' '*.pyc' '__pycache__/*' 'dev_server/*' '*.zip' 'requirements.txt'
+          zip -r "${ZIP_FILENAME}" . \
+            -x '.git/*' '.github/*' '.vscode/*' '*.pyc' \
+            '__pycache__/*' 'dev_server/*' '*.zip' \
+            '.project.json'
 
       - name: Publish Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: "${{ env.ZIP_FILENAME }}"
-          tag_name: ${{ github.ref_name }} # Use the Git tag that triggered the workflow
-          name: "Release ${{ github.ref_name }} - ${{ steps.pluginname.outputs.prop }}"
-          body: "Automated release of ${{ steps.pluginname.outputs.prop }} version ${{ github.ref_name }}."
+          tag_name: ${{ steps.version_from_tag.outputs.tag }} # Use the Git tag that triggered the workflow
+          name: "Release ${{ steps.version_from_tag.outputs.tag }} - ${{ steps.repo_name.outputs.name }}"
+          body: |
+            Automated release of ${{ steps.repo_name.outputs.name }} version ${{ steps.version_from_tag.outputs.tag }}.
+            See CHANGELOG.md or commit history for details.
           prerelease: false
           # draft: false
         env:
