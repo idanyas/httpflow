@@ -4,7 +4,7 @@
   "Name": "HTTP Query Forwarder",
   "Description": "Forwards queries to an HTTP server and displays results.",
   "Author": "idanyas",
-  "Version": "1.1.0",
+  "Version": "1.1.1",
   "Language": "python",
   "Website": "https://github.com/idanyas/httpflow",
   "IcoPath": "Images\\icon.png",
