@@ -84,15 +84,41 @@ class HttpQueryForwarder(FlowLauncher):
     def settings_path(self) -> Path:
         """Get the path to the settings file managed by Flow Launcher"""
         try:
-            # Try to find the Flow Launcher data directory
-            app_data = Path(__file__).resolve().parent.parent.parent
-            settings_dir = app_data / 'Settings' / 'Plugins' / self.__class__.__name__
+            # Method 1: Try to go from plugin directory to Flow Launcher root
+            plugin_path = Path(self.plugindir)
+            # Plugin is at: FlowLauncher/Plugins/[PluginFolder]/main.py
+            # Go up to Plugins folder, then to FlowLauncher folder
+            flow_launcher_root = plugin_path.parent.parent
+            
+            # Check if this looks like the Flow Launcher directory
+            settings_dir = flow_launcher_root / 'Settings' / 'Plugins' / self.__class__.__name__
             settings_file = settings_dir / 'Settings.json'
             
-            self.get_logger().debug(f"Settings path resolved to: {settings_file}")
+            self.get_logger().debug(f"Method 1 - Settings path resolved to: {settings_file}")
+            
+            # If the settings directory exists or its parent exists, this is likely correct
+            if settings_file.exists() or settings_dir.exists() or (settings_dir.parent).exists():
+                self.get_logger().info(f"Using settings path (method 1): {settings_file}")
+                return settings_file
+            
+            # Method 2: Try using APPDATA environment variable
+            appdata = os.environ.get('APPDATA')
+            if appdata:
+                settings_file = Path(appdata) / 'FlowLauncher' / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
+                self.get_logger().debug(f"Method 2 - Settings path resolved to: {settings_file}")
+                if settings_file.exists() or settings_file.parent.exists():
+                    self.get_logger().info(f"Using settings path (method 2): {settings_file}")
+                    return settings_file
+            
+            # Method 3: Fallback to user home directory
+            settings_file = Path.home() / 'AppData' / 'Roaming' / 'FlowLauncher' / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
+            self.get_logger().debug(f"Method 3 - Settings path resolved to: {settings_file}")
+            self.get_logger().info(f"Using settings path (method 3 - fallback): {settings_file}")
             return settings_file
+            
         except Exception as e:
-            self.get_logger().error(f"Failed to resolve settings path: {e}")
+            self.get_logger().error(f"Failed to resolve settings path: {e}", exc_info=True)
+            # Last resort fallback
             return Path.home() / 'AppData' / 'Roaming' / 'FlowLauncher' / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
 
     @cached_property
@@ -109,28 +135,46 @@ class HttpQueryForwarder(FlowLauncher):
         }
         
         try:
-            if self.settings_path.exists():
-                self.get_logger().info(f"Loading settings from: {self.settings_path}")
-                with open(self.settings_path, 'r', encoding='utf-8') as f:
-                    loaded_settings = json.load(f)
+            settings_path = self.settings_path
+            self.get_logger().info(f"Attempting to load settings from: {settings_path}")
+            self.get_logger().info(f"Settings file exists: {settings_path.exists()}")
+            
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+                    self.get_logger().debug(f"Raw settings file content: {file_content[:500]}")  # Log first 500 chars
                     
-                # Merge with defaults to ensure all keys exist
-                for key, default_value in default_settings.items():
-                    if key not in loaded_settings:
-                        loaded_settings[key] = default_value
-                        
-                self.get_logger().debug(f"Loaded settings: {loaded_settings}")
-                return loaded_settings
+                    loaded_settings = json.loads(file_content)
+                    
+                    self.get_logger().info(f"Successfully loaded settings: {loaded_settings}")
+                    
+                    # Merge with defaults to ensure all keys exist
+                    for key, default_value in default_settings.items():
+                        if key not in loaded_settings:
+                            loaded_settings[key] = default_value
+                            self.get_logger().debug(f"Added missing key '{key}' with default value: {default_value}")
+                    
+                    return loaded_settings
             else:
-                self.get_logger().info(f"Settings file not found at {self.settings_path}, using defaults")
+                self.get_logger().warning(f"Settings file not found at {settings_path}")
+                self.get_logger().warning(f"Parent directory exists: {settings_path.parent.exists()}")
+                if settings_path.parent.exists():
+                    self.get_logger().warning(f"Contents of parent directory: {list(settings_path.parent.iterdir())}")
+                self.get_logger().info("Using default settings")
                 return default_settings
+                
+        except json.JSONDecodeError as e:
+            self.get_logger().error(f"Failed to parse settings JSON: {e}", exc_info=True)
+            return default_settings
         except Exception as e:
             self.get_logger().error(f"Failed to load settings: {e}", exc_info=True)
             return default_settings
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         """Safely get a setting value with fallback"""
-        return self.settings.get(key, default)
+        value = self.settings.get(key, default)
+        self.get_logger().debug(f"Getting setting '{key}': {value} (default was: {default})")
+        return value
 
     def _get_default_ico_from_plugin_json(self, current_plugindir: str) -> str:
         try:
@@ -191,7 +235,7 @@ class HttpQueryForwarder(FlowLauncher):
         
         current_plugindir = getattr(self, 'plugindir', str(Path(__file__).resolve().parent))
 
-        logger_to_use.debug(f"Querying with param: '{param}'")
+        logger_to_use.info(f"=== Query started with param: '{param}' ===")
 
         # Get settings with proper type handling
         server_addr = str(self.get_setting("server_address", "http://localhost"))
@@ -203,6 +247,9 @@ class HttpQueryForwarder(FlowLauncher):
         
         query_param_name = str(self.get_setting("query_param_name", "q"))
         url_encode_setting = self.get_setting("url_encode_query", True)
+
+        # Log the settings being used
+        logger_to_use.info(f"Using settings: server_address='{server_addr}', server_port='{server_port_str}', server_path='{server_path}', query_param_name='{query_param_name}'")
 
         if isinstance(url_encode_setting, str):
             url_encode = url_encode_setting.lower() == 'true'
@@ -228,7 +275,7 @@ class HttpQueryForwarder(FlowLauncher):
             custom_url_template = str(self.get_setting("custom_url_template", "") or "").strip()
 
             if custom_url_template:
-                logger_to_use.info("Using custom URL template from settings.")
+                logger_to_use.info(f"Using custom URL template: '{custom_url_template}'")
                 # Prepare substitution values
                 encoded_for_placeholder = quote_plus(param)
                 replaced_url = (
@@ -257,13 +304,15 @@ class HttpQueryForwarder(FlowLauncher):
                     url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
 
                 current_url_for_error_reporting = url
-                logger_to_use.info(f"Requesting URL (custom template): {url}")
+                logger_to_use.info(f"Final URL (from custom template): {url}")
 
             else:
-                # Legacy path: build URL from server_address/port/path/query_param_name
+                # Build URL from individual settings
+                logger_to_use.info("Building URL from individual settings (no custom template)")
                 effective_server_addr = server_addr
                 if not urlsplit(effective_server_addr).scheme and effective_server_addr:
                     effective_server_addr = "http://" + effective_server_addr
+                    logger_to_use.debug(f"Added http:// scheme to server address: '{effective_server_addr}'")
                 
                 parsed_addr = urlsplit(effective_server_addr)
                 scheme = parsed_addr.scheme or "http"
@@ -271,19 +320,35 @@ class HttpQueryForwarder(FlowLauncher):
                 if not netloc_host:
                     raise ValueError(f"Invalid server_address '{server_addr}': no hostname.")
 
-                final_netloc = f"{netloc_host}:{parsed_addr.port}" if parsed_addr.port else (f"{netloc_host}:{server_port_str}" if server_port_str else netloc_host)
+                # Build the network location (host:port)
+                if parsed_addr.port:
+                    # Port was included in the server_address
+                    final_netloc = f"{netloc_host}:{parsed_addr.port}"
+                    logger_to_use.debug(f"Using port from server_address: {parsed_addr.port}")
+                elif server_port_str:
+                    # Use the separate port setting
+                    final_netloc = f"{netloc_host}:{server_port_str}"
+                    logger_to_use.debug(f"Using port from server_port setting: {server_port_str}")
+                else:
+                    # No port specified
+                    final_netloc = netloc_host
+                    logger_to_use.debug("No port specified, using default for scheme")
+                
                 query_to_send = quote_plus(param) if url_encode else param
                 query_params_str = f"{query_param_name}={query_to_send}"
                 url = urlunsplit((scheme, final_netloc, server_path, query_params_str, ''))
                 current_url_for_error_reporting = url
-                logger_to_use.info(f"Requesting URL: {url}")
+                logger_to_use.info(f"Final URL (from individual settings): {url}")
 
+            logger_to_use.info(f"Making HTTP request to: {url}")
             response_obj_for_logging = requests.get(url, timeout=timeout)
             response_obj_for_logging.raise_for_status()
             server_response_data = response_obj_for_logging.json()
 
             if not isinstance(server_response_data, list):
                 raise ValueError(f"Server response from {url} is not a JSON list.")
+
+            logger_to_use.info(f"Received {len(server_response_data)} items from server")
 
             for item_data in server_response_data:
                 if not (isinstance(item_data, dict) and item_data.get("Title")):
@@ -368,6 +433,7 @@ class HttpQueryForwarder(FlowLauncher):
                 "IcoPath": final_resolved_default_icon
             })
         
+        logger_to_use.info(f"=== Query completed, returning {len(results)} results ===")
         return results
 
     def context_menu(self, data: Any) -> List[dict]:
