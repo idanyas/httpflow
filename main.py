@@ -30,17 +30,55 @@ class HttpQueryForwarder(FlowLauncher):
     icon: str 
     plugindir: str
     resolved_default_icon_path: str
+    _logger: Optional[logging.Logger] = None
 
     def __init__(self):
-        super().__init__()
-        
+        # Initialize basic attributes before super().__init__()
         self.plugindir = str(Path(__file__).resolve().parent)
         self.icon = self._get_default_ico_from_plugin_json(self.plugindir)
+        self.resolved_default_icon_path = ""
+        
+        # Initialize a fallback logger before super().__init__()
+        self._init_fallback_logger()
+        
+        # Call parent constructor (may call query method)
+        super().__init__()
+        
+        # Resolve icon path after initialization
         self.resolved_default_icon_path = self._resolve_icon_path_static(
-            self.icon, self.plugindir, self.logger
+            self.icon, self.plugindir, self.get_logger()
         )
         
-        self.logger.info(f"HttpQueryForwarder initialized with icon: {self.resolved_default_icon_path}")
+        self.get_logger().info(f"HttpQueryForwarder initialized with icon: {self.resolved_default_icon_path}")
+
+    def _init_fallback_logger(self):
+        """Initialize a fallback logger for use before FlowLauncher sets up its logger"""
+        logger_name = f"HttpQueryForwarder.Fallback"
+        self._logger = logging.getLogger(logger_name)
+        
+        if not self._logger.handlers:
+            log_file_path = Path(self.plugindir) / LOG_FILENAME
+            try:
+                handler = logging.FileHandler(log_file_path, encoding='utf-8', mode='a')
+                formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(formatter)
+                self._logger.addHandler(handler)
+                self._logger.setLevel(logging.DEBUG)
+            except Exception as e:
+                # If we can't create a file logger, at least use console
+                console_handler = logging.StreamHandler()
+                console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+                self._logger.addHandler(console_handler)
+                self._logger.setLevel(logging.DEBUG)
+                self._logger.error(f"Failed to create file logger: {e}")
+
+    def get_logger(self) -> logging.Logger:
+        """Get the logger, using FlowLauncher's if available, otherwise fallback"""
+        # Try to use FlowLauncher's logger if it exists
+        if hasattr(self, 'logger') and isinstance(getattr(self, 'logger', None), logging.Logger):
+            return self.logger
+        # Otherwise use our fallback logger
+        return self._logger
 
     @cached_property
     def settings_path(self) -> Path:
@@ -51,10 +89,10 @@ class HttpQueryForwarder(FlowLauncher):
             settings_dir = app_data / 'Settings' / 'Plugins' / self.__class__.__name__
             settings_file = settings_dir / 'Settings.json'
             
-            self.logger.debug(f"Settings path resolved to: {settings_file}")
+            self.get_logger().debug(f"Settings path resolved to: {settings_file}")
             return settings_file
         except Exception as e:
-            self.logger.error(f"Failed to resolve settings path: {e}")
+            self.get_logger().error(f"Failed to resolve settings path: {e}")
             return Path.home() / 'AppData' / 'Roaming' / 'FlowLauncher' / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
 
     @cached_property
@@ -72,7 +110,7 @@ class HttpQueryForwarder(FlowLauncher):
         
         try:
             if self.settings_path.exists():
-                self.logger.info(f"Loading settings from: {self.settings_path}")
+                self.get_logger().info(f"Loading settings from: {self.settings_path}")
                 with open(self.settings_path, 'r', encoding='utf-8') as f:
                     loaded_settings = json.load(f)
                     
@@ -81,13 +119,13 @@ class HttpQueryForwarder(FlowLauncher):
                     if key not in loaded_settings:
                         loaded_settings[key] = default_value
                         
-                self.logger.debug(f"Loaded settings: {loaded_settings}")
+                self.get_logger().debug(f"Loaded settings: {loaded_settings}")
                 return loaded_settings
             else:
-                self.logger.info(f"Settings file not found at {self.settings_path}, using defaults")
+                self.get_logger().info(f"Settings file not found at {self.settings_path}, using defaults")
                 return default_settings
         except Exception as e:
-            self.logger.error(f"Failed to load settings: {e}", exc_info=True)
+            self.get_logger().error(f"Failed to load settings: {e}", exc_info=True)
             return default_settings
 
     def get_setting(self, key: str, default: Any = None) -> Any:
@@ -141,9 +179,17 @@ class HttpQueryForwarder(FlowLauncher):
 
     def query(self, param: str = "") -> List[dict]:
         """Main query handler"""
-        logger_to_use = self.logger
-        final_resolved_default_icon = self.resolved_default_icon_path
-        current_plugindir = self.plugindir
+        logger_to_use = self.get_logger()
+        
+        # Handle case where initialization might not be complete
+        final_resolved_default_icon = getattr(self, 'resolved_default_icon_path', '')
+        if not final_resolved_default_icon:
+            # Try to resolve icon if not already done
+            icon = getattr(self, 'icon', '')
+            plugindir = getattr(self, 'plugindir', str(Path(__file__).resolve().parent))
+            final_resolved_default_icon = self._resolve_icon_path_static(icon, plugindir, logger_to_use)
+        
+        current_plugindir = getattr(self, 'plugindir', str(Path(__file__).resolve().parent))
 
         logger_to_use.debug(f"Querying with param: '{param}'")
 
@@ -327,9 +373,9 @@ class HttpQueryForwarder(FlowLauncher):
     def context_menu(self, data: Any) -> List[dict]:
         """Handle context menu requests"""
         menu_results: List[dict] = []
-        logger_to_use = self.logger
-        final_resolved_default_icon = self.resolved_default_icon_path
-        current_plugindir = self.plugindir
+        logger_to_use = self.get_logger()
+        final_resolved_default_icon = getattr(self, 'resolved_default_icon_path', '')
+        current_plugindir = getattr(self, 'plugindir', str(Path(__file__).resolve().parent))
 
         if isinstance(data, dict) and "defined_menu_items" in data:
             for item_def in data.get("defined_menu_items", []):
@@ -373,22 +419,22 @@ class HttpQueryForwarder(FlowLauncher):
 
     def open_url(self, url: str):
         """Open URL in default browser"""
-        self.logger.info(f"Opening URL: {url}")
+        self.get_logger().info(f"Opening URL: {url}")
         try:
             webbrowser.open(url)
-            self.logger.debug(f"Successfully opened URL: {url}")
+            self.get_logger().debug(f"Successfully opened URL: {url}")
         except Exception as e:
-            self.logger.error(f"Failed to open URL '{url}': {e}", exc_info=True)
+            self.get_logger().error(f"Failed to open URL '{url}': {e}", exc_info=True)
             FlowLauncherAPI.show_msg(
                 "Error Opening URL",
                 f"Could not open: {url}",
-                self.resolved_default_icon_path
+                getattr(self, 'resolved_default_icon_path', '')
             )
 
     def shell_run(self, command: Union[str, List[str]]):
         """Execute shell command"""
         cmd_str = command[0] if isinstance(command, list) and command else str(command)
-        self.logger.info(f"Executing shell command: {cmd_str}")
+        self.get_logger().info(f"Executing shell command: {cmd_str}")
         
         try:
             # Use Flow Launcher's ShellRun API
@@ -397,19 +443,19 @@ class HttpQueryForwarder(FlowLauncher):
                 "parameters": [cmd_str]
             }
             print(json.dumps(payload))
-            self.logger.info(f"Shell command requested: {cmd_str}")
+            self.get_logger().info(f"Shell command requested: {cmd_str}")
         except Exception as e:
-            self.logger.error(f"Failed to execute shell command '{cmd_str}': {e}", exc_info=True)
+            self.get_logger().error(f"Failed to execute shell command '{cmd_str}': {e}", exc_info=True)
             FlowLauncherAPI.show_msg(
                 "Shell Command Error",
                 f"Failed to execute command",
-                self.resolved_default_icon_path
+                getattr(self, 'resolved_default_icon_path', '')
             )
 
     def copy_to_clipboard(self, text: Any, directCopy: Union[str, bool] = False, showDefaultNotification: Union[str, bool] = True):
         """Copy text to clipboard"""
         text_to_copy = str(text)
-        self.logger.info(f"Copying to clipboard: {text_to_copy[:50]}...")
+        self.get_logger().info(f"Copying to clipboard: {text_to_copy[:50]}...")
         
         try:
             # Convert string bools if needed
@@ -421,13 +467,13 @@ class HttpQueryForwarder(FlowLauncher):
                 "parameters": [text_to_copy, should_direct_copy, should_show_notification]
             }
             print(json.dumps(payload))
-            self.logger.info("Text copied to clipboard")
+            self.get_logger().info("Text copied to clipboard")
         except Exception as e:
-            self.logger.error(f"Failed to copy to clipboard: {e}", exc_info=True)
+            self.get_logger().error(f"Failed to copy to clipboard: {e}", exc_info=True)
             FlowLauncherAPI.show_msg(
                 "Clipboard Error",
                 "Failed to copy to clipboard",
-                self.resolved_default_icon_path
+                getattr(self, 'resolved_default_icon_path', '')
             )
 
     def change_query(self, new_query: str, requery: Union[str, bool] = "false"):
@@ -436,16 +482,16 @@ class HttpQueryForwarder(FlowLauncher):
         
         try:
             should_requery = str(requery).lower() == 'true' if isinstance(requery, str) else bool(requery)
-            self.logger.info(f"Changing query to: {query_str}, requery: {should_requery}")
+            self.get_logger().info(f"Changing query to: {query_str}, requery: {should_requery}")
             
             FlowLauncherAPI.change_query(query_str, requery=should_requery)
-            self.logger.info("Query changed successfully")
+            self.get_logger().info("Query changed successfully")
         except Exception as e:
-            self.logger.error(f"Failed to change query: {e}", exc_info=True)
+            self.get_logger().error(f"Failed to change query: {e}", exc_info=True)
             FlowLauncherAPI.show_msg(
                 "Query Change Error",
                 "Failed to change query",
-                self.resolved_default_icon_path
+                getattr(self, 'resolved_default_icon_path', '')
             )
 
     def flow_show_msg(self, title: str, sub_title: str, ico_path_param: Optional[str] = None):
@@ -454,19 +500,21 @@ class HttpQueryForwarder(FlowLauncher):
         
         try:
             icon_to_use = self._resolve_icon_path_static(
-                ico_path_param, self.plugindir, self.logger
-            ) or self.resolved_default_icon_path
+                ico_path_param, 
+                getattr(self, 'plugindir', str(Path(__file__).resolve().parent)), 
+                self.get_logger()
+            ) or getattr(self, 'resolved_default_icon_path', '')
             
-            self.logger.info(f"Showing message: {title_str}")
+            self.get_logger().info(f"Showing message: {title_str}")
             
             payload = {
                 "method": "Flow.Launcher.ShowMsg",
                 "parameters": [title_str, sub_title_str, icon_to_use]
             }
             print(json.dumps(payload))
-            self.logger.info("Message displayed")
+            self.get_logger().info("Message displayed")
         except Exception as e:
-            self.logger.error(f"Failed to show message: {e}", exc_info=True)
+            self.get_logger().error(f"Failed to show message: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
