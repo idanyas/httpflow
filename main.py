@@ -42,7 +42,7 @@ if libdir.is_dir():
 
 import webbrowser
 import requests
-from urllib.parse import quote_plus, urlunsplit, urlsplit
+from urllib.parse import quote_plus, urlunsplit, urlsplit, urlencode, parse_qsl
 import traceback 
 from typing import List, Dict, Any, Optional, Union
 import yaml 
@@ -134,7 +134,8 @@ class HttpQueryForwarder(FlowLauncher):
             "server_path": "/",
             "query_param_name": "q",
             "url_encode_query": True, 
-            "request_timeout": 5  
+            "request_timeout": 5,
+            "custom_url_template": ""  # New: optional override for full URL construction
         }
         
         effective_settings = default_settings_map.copy()
@@ -342,21 +343,58 @@ class HttpQueryForwarder(FlowLauncher):
         response_obj_for_logging = None 
 
         try:
-            effective_server_addr = server_addr
-            if not urlsplit(effective_server_addr).scheme and effective_server_addr:
-                effective_server_addr = "http://" + effective_server_addr
-            
-            parsed_addr = urlsplit(effective_server_addr)
-            scheme = parsed_addr.scheme or "http"
-            netloc_host = parsed_addr.hostname
-            if not netloc_host: raise ValueError(f"Invalid server_address '{server_addr}': no hostname.")
+            # Check if a custom URL template should be used
+            custom_url_template = str(effective_settings.get("custom_url_template", "") or "").strip()
 
-            final_netloc = f"{netloc_host}:{parsed_addr.port}" if parsed_addr.port else (f"{netloc_host}:{server_port_str}" if server_port_str else netloc_host)
-            query_to_send = quote_plus(param) if url_encode else param
-            query_params_str = f"{query_param_name}={query_to_send}"
-            url = urlunsplit((scheme, final_netloc, server_path, query_params_str, ''))
-            current_url_for_error_reporting = url
-            logger_to_use.info(f"Requesting URL: {url} (derived from settings: {effective_settings})")
+            if custom_url_template:
+                logger_to_use.info("Using custom URL template from settings.")
+                # Prepare substitution values
+                encoded_for_placeholder = quote_plus(param)
+                replaced_url = (
+                    custom_url_template
+                    .replace("{encoded_query}", encoded_for_placeholder)
+                    .replace("{query}", param)
+                    .replace("{query_param_name}", query_param_name)
+                )
+
+                # Ensure scheme; if missing, default to http
+                if not urlsplit(replaced_url).scheme:
+                    replaced_url = "http://" + replaced_url
+                    logger_to_use.debug(f"No scheme detected in template. Defaulting to http -> '{replaced_url}'")
+
+                parsed = urlsplit(replaced_url)
+
+                # If neither {query} nor {encoded_query} were used, append the query param using the configured name
+                if ("{encoded_query}" not in custom_url_template) and ("{query}" not in custom_url_template):
+                    query_to_send = quote_plus(param) if url_encode else param
+                    existing_qs = list(parse_qsl(parsed.query, keep_blank_values=True))
+                    existing_qs.append((query_param_name, query_to_send))
+                    new_query = urlencode(existing_qs, doseq=True)
+                    url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
+                else:
+                    # Placeholders already handled; use as-is
+                    url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+
+                current_url_for_error_reporting = url
+                logger_to_use.info(f"Requesting URL (custom template): {url}")
+
+            else:
+                # Legacy path: build URL from server_address/port/path/query_param_name
+                effective_server_addr = server_addr
+                if not urlsplit(effective_server_addr).scheme and effective_server_addr:
+                    effective_server_addr = "http://" + effective_server_addr
+                
+                parsed_addr = urlsplit(effective_server_addr)
+                scheme = parsed_addr.scheme or "http"
+                netloc_host = parsed_addr.hostname
+                if not netloc_host: raise ValueError(f"Invalid server_address '{server_addr}': no hostname.")
+
+                final_netloc = f"{netloc_host}:{parsed_addr.port}" if parsed_addr.port else (f"{netloc_host}:{server_port_str}" if server_port_str else netloc_host)
+                query_to_send = quote_plus(param) if url_encode else param
+                query_params_str = f"{query_param_name}={query_to_send}"
+                url = urlunsplit((scheme, final_netloc, server_path, query_params_str, ''))
+                current_url_for_error_reporting = url
+                logger_to_use.info(f"Requesting URL: {url} (derived from settings: {effective_settings})")
 
             response_obj_for_logging = requests.get(url, timeout=timeout)
             response_obj_for_logging.raise_for_status() 

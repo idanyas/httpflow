@@ -8,7 +8,8 @@ This plugin allows you to forward your search queries from Flow Launcher to a cu
 - Displays rich results from the server, including titles, subtitles, icons.
 - Supports custom actions (opening URLs, running shell commands, etc.) defined by the server.
 - Supports context menus defined by the server.
-- Server address, port, path, query parameter, and request timeout are configurable in Flow Launcher settings.
+- Server address, port, path, query parameter, and request timeout are configurable.
+- Optional: Use a single custom URL template to fully control the request URL format.
 
 ## Installation
 
@@ -22,18 +23,56 @@ This plugin allows you to forward your search queries from Flow Launcher to a cu
     - Copy this entire folder into Flow Launcher's `Plugins` directory (from step 2).
 4.  **Restart Flow Launcher**: Close and reopen Flow Launcher to load the new plugin.
 5.  **Configure**:
-    - Open Flow Launcher settings (type `settings` or right-click Flow icon > Settings).
-    - Go to the "Plugins" tab.
-    - Find "HTTP Query Forwarder" in the list and click its icon or title to open its settings.
-    - Configure the "HTTP Server Address", "Port", "Path", "Query Parameter Name", and "Request Timeout" according to your server setup.
+    - Configuration is managed via an external YAML file created at:
+      `[User Documents]\httpflow\settings.yaml`.
+    - If the file or folder doesn't exist, the plugin will create it on first run with defaults.
     - Default Action Keyword: `fwd`
+
+## Configuration
+
+The plugin will create or use `[Documents]\httpflow\settings.yaml`. You can configure either the classic fields or provide a full URL template.
+
+Classic fields:
+
+```yaml
+server_address: "http://127.0.0.1"
+server_port: "8080"
+server_path: "/"
+query_param_name: "q"
+url_encode_query: true
+request_timeout: 5
+```
+
+Custom URL Template (optional):
+
+- Set `custom_url_template` to override the URL construction. It supports:
+  - `{query}`: raw user query
+  - `{encoded_query}`: URL-encoded user query
+  - `{query_param_name}`: the name of the query parameter
+- If neither `{query}` nor `{encoded_query}` is present in the template, the plugin appends the query using `query_param_name` and respects `url_encode_query`.
+- If no scheme is provided (e.g., `localhost:8080/search`), `http://` is assumed.
+
+Examples:
+
+```yaml
+# 1) Explicit encoded placeholder
+custom_url_template: "http://localhost:8080/search?q={encoded_query}&lang=en"
+
+# 2) Let the plugin append ?{query_param_name}=... (uses url_encode_query)
+custom_url_template: "https://api.example.com/search"
+
+# 3) Use raw query
+custom_url_template: "https://example.com/echo?text={query}"
+```
+
+If `custom_url_template` is empty or omitted, the plugin uses the classic fields.
 
 ## Server API
 
 Your HTTP server should:
 
 - Listen for GET requests.
-- Accept a query parameter (default `q`) containing the user's input (e.g., `http://localhost:8080/?q=search%20term`).
+- Accept a query parameter (default `q`) containing the user's input (e.g., `http://localhost:8080/?q=search%20term`), unless your custom template defines a different pattern.
 - Respond with a JSON array. Each object in the array represents a result item.
 
 **Example Server Response JSON:**
@@ -83,7 +122,7 @@ The `IcoPath` can be a full URL or a relative path (e.g., `Images/custom_icon.pn
 This plugin is developed in Python.
 
 - Dependencies are listed in `requirements.txt`.
-- GitHub Actions are configured in `.github/workflows/release.yml` to automatically build and package the plugin into a distributable zip file on pushes to the `main` branch.
+- GitHub Actions are configured in `.github/workflows/release.yml` to automatically build and package the plugin into a distributable zip file.
 
 To build locally (for testing):
 

@@ -10,3 +10,41 @@ body:
 
         If the file or 'httpflow' directory does not exist, the plugin will attempt
         to create it with default settings when first run.
+
+        New: Custom URL Template (optional)
+        -----------------------------------
+        You can now override the default URL construction with a single template string.
+        If 'custom_url_template' is set and not empty, it will be used to build the request URL.
+        Supported placeholders:
+          - {query}            : raw user query
+          - {encoded_query}    : URL-encoded user query
+          - {query_param_name} : the configured query parameter name (e.g., 'q')
+
+        Behavior:
+          - If the template includes {query} or {encoded_query}, those will be substituted directly.
+          - If neither placeholder is present, the plugin will append ?{query_param_name}={...} (or &...),
+            using url_encode_query to decide whether to encode the value.
+          - If the template has no scheme (e.g., 'localhost:8080/search'), 'http://' is assumed.
+
+        Example settings.yaml:
+          server_address: "http://127.0.0.1"
+          server_port: "8080"
+          server_path: "/"
+          query_param_name: "q"
+          url_encode_query: true
+          request_timeout: 5
+
+          # Use one of the following patterns:
+
+          # 1) Full template with explicit encoded query:
+          # custom_url_template: "http://localhost:8080/search?q={encoded_query}&lang=en"
+
+          # 2) Append behavior (no placeholders): uses query_param_name + url_encode_query
+          # custom_url_template: "http://api.example.com/search"
+
+          # 3) Using raw query (no encoding):
+          # custom_url_template: "https://example.com/echo?text={query}"
+
+        Notes:
+          - If 'custom_url_template' is empty or omitted, the plugin builds the URL from:
+            server_address + server_port + server_path + ?{query_param_name}=...
