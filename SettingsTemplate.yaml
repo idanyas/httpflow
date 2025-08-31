@@ -1,50 +1,87 @@
-#$schema: https://www.flowlauncher.com/schemas/settings-template.schema.json
 body:
   - type: textBlock
     attributes:
-      description: |
-        Plugin configuration has been moved to an external YAML file.
-        Please edit the following file to configure the HTTP Query Forwarder:
+      description: >
+        Configure your HTTP Query Forwarder plugin to connect to your custom HTTP server.
+        The plugin will forward your queries and display the results returned by the server.
 
-        [User's Documents Folder]\httpflow\settings.yaml
+  # Server Configuration Section
+  - type: textBlock
+    attributes:
+      description: >
+        ### Server Configuration
+        Basic server connection settings. These are used when custom URL template is not specified.
 
-        If the file or 'httpflow' directory does not exist, the plugin will attempt
-        to create it with default settings when first run.
+  - type: input
+    attributes:
+      name: server_address
+      label: "Server Address:"
+      description: "HTTP/HTTPS server address (e.g., http://127.0.0.1 or https://api.example.com)"
+      defaultValue: "http://127.0.0.1"
 
-        New: Custom URL Template (optional)
-        -----------------------------------
-        You can now override the default URL construction with a single template string.
-        If 'custom_url_template' is set and not empty, it will be used to build the request URL.
-        Supported placeholders:
-          - {query}            : raw user query
-          - {encoded_query}    : URL-encoded user query
-          - {query_param_name} : the configured query parameter name (e.g., 'q')
+  - type: input
+    attributes:
+      name: server_port
+      label: "Server Port:"
+      description: "Server port number"
+      defaultValue: "8080"
 
-        Behavior:
-          - If the template includes {query} or {encoded_query}, those will be substituted directly.
-          - If neither placeholder is present, the plugin will append ?{query_param_name}={...} (or &...),
-            using url_encode_query to decide whether to encode the value.
-          - If the template has no scheme (e.g., 'localhost:8080/search'), 'http://' is assumed.
+  - type: input
+    attributes:
+      name: server_path
+      label: "Server Path:"
+      description: "Path on the server (e.g., / or /api/search)"
+      defaultValue: "/"
 
-        Example settings.yaml:
-          server_address: "http://127.0.0.1"
-          server_port: "8080"
-          server_path: "/"
-          query_param_name: "q"
-          url_encode_query: true
-          request_timeout: 5
+  - type: input
+    attributes:
+      name: query_param_name
+      label: "Query Parameter Name:"
+      description: "Name of the query parameter to send (e.g., 'q' results in ?q=...)"
+      defaultValue: "q"
 
-          # Use one of the following patterns:
+  # Query Options Section
+  - type: textBlock
+    attributes:
+      description: >
+        ### Query Options
 
-          # 1) Full template with explicit encoded query:
-          # custom_url_template: "http://localhost:8080/search?q={encoded_query}&lang=en"
+  - type: checkbox
+    attributes:
+      name: url_encode_query
+      label: "URL Encode Query"
+      description: "Enable URL encoding for the query parameter"
+      defaultValue: true
 
-          # 2) Append behavior (no placeholders): uses query_param_name + url_encode_query
-          # custom_url_template: "http://api.example.com/search"
+  - type: input
+    attributes:
+      name: request_timeout
+      label: "Request Timeout (seconds):"
+      description: "Maximum time to wait for server response"
+      defaultValue: "5"
 
-          # 3) Using raw query (no encoding):
-          # custom_url_template: "https://example.com/echo?text={query}"
+  # Advanced Configuration Section
+  - type: textBlock
+    attributes:
+      description: >
+        ### Advanced Configuration
+        Use a custom URL template to have full control over the request URL format.
 
-        Notes:
-          - If 'custom_url_template' is empty or omitted, the plugin builds the URL from:
-            server_address + server_port + server_path + ?{query_param_name}=...
+        **Template Variables:**
+        - `{query}` - Raw user query
+        - `{encoded_query}` - URL-encoded user query
+        - `{query_param_name}` - The query parameter name configured above
+
+        **Examples:**
+        - `http://localhost:8080/search?q={encoded_query}&lang=en`
+        - `https://api.example.com/v1/query/{encoded_query}`
+        - `https://example.com/echo?text={query}`
+
+        Leave empty to use the basic server configuration above.
+
+  - type: textarea
+    attributes:
+      name: custom_url_template
+      label: "Custom URL Template:"
+      description: "Optional: Override URL construction with a custom template"
+      defaultValue: ""
