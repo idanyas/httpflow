@@ -4,6 +4,7 @@ import sys
 import os
 from pathlib import Path
 import json
+from functools import cached_property
 
 # --- BEGIN SYS.PATH MODIFICATION ---
 plugindir_path = Path(__file__).resolve().parent
@@ -23,13 +24,65 @@ from flowlauncher import FlowLauncher, FlowLauncherAPI
 
 class HttpQueryForwarder(FlowLauncher):
     
-    def query(self, param: str = "") -> List[dict]:
-        """Main query handler"""
-        # Get settings with defaults
-        settings = getattr(self, 'settings', {}) or {}
+    @cached_property
+    def plugindir(self):
+        """Find the plugin directory by locating plugin.json"""
+        potential_paths = [
+            os.path.abspath(os.getcwd()),
+            os.path.dirname(os.path.abspath(__file__)),
+            os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
+        ]
         
-        # Default values
-        defaults = {
+        for path in potential_paths:
+            current = path
+            while True:
+                if os.path.exists(os.path.join(current, 'plugin.json')):
+                    return current
+                parent = os.path.dirname(current)
+                if parent == current:  # reached filesystem root
+                    break
+                current = parent
+        
+        # Fallback to script directory
+        return os.path.dirname(os.path.abspath(__file__))
+    
+    @cached_property
+    def settings(self):
+        """Load and cache settings from Flow Launcher's settings directory"""
+        try:
+            # Navigate from plugin directory to Flow Launcher's settings
+            # Plugin is at: FlowLauncher/Plugins/[PluginFolder]/
+            # Settings at: FlowLauncher/Settings/Plugins/[ClassName]/Settings.json
+            flow_launcher_root = os.path.dirname(os.path.dirname(self.plugindir))
+            settings_path = os.path.join(
+                flow_launcher_root, 'Settings', 'Plugins', 
+                self.__class__.__name__, 'Settings.json'
+            )
+            
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            
+            # Try alternative path using APPDATA
+            appdata = os.environ.get('APPDATA')
+            if appdata:
+                alt_settings_path = os.path.join(
+                    appdata, 'FlowLauncher', 'Settings', 'Plugins',
+                    self.__class__.__name__, 'Settings.json'
+                )
+                if os.path.exists(alt_settings_path):
+                    with open(alt_settings_path, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+            
+        except Exception:
+            pass
+        
+        # Return defaults if settings file not found or error
+        return self.get_default_settings()
+    
+    def get_default_settings(self):
+        """Return default settings matching SettingsTemplate.yaml"""
+        return {
             "server_address": "http://127.0.0.1",
             "server_port": "8080",
             "server_path": "/",
@@ -38,32 +91,42 @@ class HttpQueryForwarder(FlowLauncher):
             "request_timeout": "5",
             "custom_url_template": ""
         }
-        
-        # Get each setting with fallback to default
-        server_addr = str(settings.get("server_address", defaults["server_address"]))
-        server_port = str(settings.get("server_port", defaults["server_port"]))
-        server_path = str(settings.get("server_path", defaults["server_path"]))
-        query_param_name = str(settings.get("query_param_name", defaults["query_param_name"]))
-        url_encode_query = settings.get("url_encode_query", defaults["url_encode_query"])
-        request_timeout = settings.get("request_timeout", defaults["request_timeout"])
-        custom_url_template = str(settings.get("custom_url_template", defaults["custom_url_template"]))
+    
+    def get_str(self, key: str, default: str = "") -> str:
+        """Get string setting with type safety"""
+        return str(self.settings.get(key, default))
+    
+    def get_int(self, key: str, default: int = 0) -> int:
+        """Get integer setting with type safety"""
+        try:
+            return int(self.settings.get(key, default))
+        except (ValueError, TypeError):
+            return default
+    
+    def get_bool(self, key: str, default: bool = False) -> bool:
+        """Get boolean setting with type safety"""
+        val = self.settings.get(key, default)
+        if isinstance(val, bool):
+            return val
+        return str(val).lower() in ("1", "true", "yes")
+    
+    def query(self, param: str = "") -> List[dict]:
+        """Main query handler"""
+        # Get settings using type-safe methods
+        server_addr = self.get_str("server_address", "http://127.0.0.1")
+        server_port = self.get_str("server_port", "8080")
+        server_path = self.get_str("server_path", "/")
+        query_param_name = self.get_str("query_param_name", "q")
+        url_encode = self.get_bool("url_encode_query", True)
+        timeout = self.get_int("request_timeout", 5)
+        custom_url_template = self.get_str("custom_url_template", "")
         
         # Ensure server_path starts with /
         if server_path and not server_path.startswith("/"):
             server_path = "/" + server_path
         
-        # Handle boolean
-        if isinstance(url_encode_query, str):
-            url_encode = url_encode_query.lower() == 'true'
-        else:
-            url_encode = bool(url_encode_query)
-        
-        # Handle timeout
-        try:
-            timeout = int(request_timeout)
-            if timeout <= 0:
-                timeout = 5
-        except (ValueError, TypeError):
+        # Validate timeout
+        if timeout <= 0:
             timeout = 5
         
         results = []
@@ -145,15 +208,14 @@ class HttpQueryForwarder(FlowLauncher):
                     if item.get("AutoCompleteText"):
                         result["AutoCompleteText"] = item["AutoCompleteText"]
                     
-                    if item.get("ContextData"):
-                        result["ContextData"] = item["ContextData"]
-                    
                     # Handle context menu items
                     if item.get("ContextMenuItems") and isinstance(item["ContextMenuItems"], list):
                         result["ContextData"] = {
                             "original_data": item.get("ContextData"),
                             "defined_menu_items": item["ContextMenuItems"]
                         }
+                    elif item.get("ContextData"):
+                        result["ContextData"] = item["ContextData"]
                     
                     # Handle actions
                     if item.get("JsonRPCAction"):
@@ -195,9 +257,10 @@ class HttpQueryForwarder(FlowLauncher):
                     "IcoPath": icon_path
                 }]
             else:
+                # Show current configuration in subtitle when idle
                 results = [{
                     "Title": "HTTP Query Forwarder",
-                    "SubTitle": f"Ready. Server: {server_addr}",
+                    "SubTitle": f"Ready. Server: {server_addr}:{server_port}",
                     "IcoPath": icon_path
                 }]
         
