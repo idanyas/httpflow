@@ -25,56 +25,65 @@ from flowlauncher import FlowLauncher, FlowLauncherAPI
 class HttpQueryForwarder(FlowLauncher):
     
     @cached_property
-    def plugindir(self):
-        """Find the plugin directory by locating plugin.json"""
-        potential_paths = [
-            os.path.abspath(os.getcwd()),
-            os.path.dirname(os.path.abspath(__file__)),
-            os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
-        ]
-        
-        for path in potential_paths:
-            current = path
-            while True:
-                if os.path.exists(os.path.join(current, 'plugin.json')):
-                    return current
-                parent = os.path.dirname(current)
-                if parent == current:  # reached filesystem root
-                    break
-                current = parent
-        
-        # Fallback to script directory
-        return os.path.dirname(os.path.abspath(__file__))
+    def plugin_name(self):
+        """Get the plugin name from plugin.json"""
+        try:
+            plugin_json_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), 
+                'plugin.json'
+            )
+            if os.path.exists(plugin_json_path):
+                with open(plugin_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get('Name', self.__class__.__name__)
+        except Exception:
+            pass
+        return self.__class__.__name__
     
     @cached_property
     def settings(self):
         """Load and cache settings from Flow Launcher's settings directory"""
         try:
-            # Navigate from plugin directory to Flow Launcher's settings
-            # Plugin is at: FlowLauncher/Plugins/[PluginFolder]/
-            # Settings at: FlowLauncher/Settings/Plugins/[ClassName]/Settings.json
-            flow_launcher_root = os.path.dirname(os.path.dirname(self.plugindir))
-            settings_path = os.path.join(
-                flow_launcher_root, 'Settings', 'Plugins', 
-                self.__class__.__name__, 'Settings.json'
-            )
-            
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            
-            # Try alternative path using APPDATA
+            # Primary method: Use APPDATA with plugin Name from plugin.json
             appdata = os.environ.get('APPDATA')
             if appdata:
-                alt_settings_path = os.path.join(
+                settings_path = os.path.join(
                     appdata, 'FlowLauncher', 'Settings', 'Plugins',
-                    self.__class__.__name__, 'Settings.json'
+                    self.plugin_name, 'Settings.json'
                 )
-                if os.path.exists(alt_settings_path):
-                    with open(alt_settings_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
+                
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        loaded = json.load(f)
+                        # Merge with defaults to ensure all keys exist
+                        defaults = self.get_default_settings()
+                        defaults.update(loaded)
+                        return defaults
             
-        except Exception:
+            # Fallback method: Try relative path from plugin directory
+            plugin_dir = os.path.dirname(os.path.abspath(__file__))
+            flow_launcher_root = Path(plugin_dir).parent.parent
+            
+            # Try with plugin display name
+            settings_path = flow_launcher_root / 'Settings' / 'Plugins' / self.plugin_name / 'Settings.json'
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                    defaults = self.get_default_settings()
+                    defaults.update(loaded)
+                    return defaults
+            
+            # Try with class name as last resort
+            settings_path = flow_launcher_root / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                    defaults = self.get_default_settings()
+                    defaults.update(loaded)
+                    return defaults
+                    
+        except Exception as e:
+            # Silent fail - use defaults
             pass
         
         # Return defaults if settings file not found or error
@@ -108,7 +117,9 @@ class HttpQueryForwarder(FlowLauncher):
         val = self.settings.get(key, default)
         if isinstance(val, bool):
             return val
-        return str(val).lower() in ("1", "true", "yes")
+        if isinstance(val, str):
+            return val.lower() in ("1", "true", "yes")
+        return bool(val)
     
     def query(self, param: str = "") -> List[dict]:
         """Main query handler"""
@@ -258,9 +269,10 @@ class HttpQueryForwarder(FlowLauncher):
                 }]
             else:
                 # Show current configuration in subtitle when idle
+                port_display = f":{server_port}" if server_port else ""
                 results = [{
                     "Title": "HTTP Query Forwarder",
-                    "SubTitle": f"Ready. Server: {server_addr}:{server_port}",
+                    "SubTitle": f"Ready. Server: {server_addr}{port_display}",
                     "IcoPath": icon_path
                 }]
         
