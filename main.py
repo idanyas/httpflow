@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import logging
 import json
-from functools import cached_property
 
 # --- BEGIN SYS.PATH MODIFICATION ---
 plugindir_path = Path(__file__).resolve().parent
@@ -31,6 +30,7 @@ class HttpQueryForwarder(FlowLauncher):
     plugindir: str
     resolved_default_icon_path: str
     _logger: Optional[logging.Logger] = None
+    _default_settings: Dict[str, Any]
 
     def __init__(self):
         # Initialize basic attributes before super().__init__()
@@ -38,11 +38,28 @@ class HttpQueryForwarder(FlowLauncher):
         self.icon = self._get_default_ico_from_plugin_json(self.plugindir)
         self.resolved_default_icon_path = ""
         
+        # Define default settings
+        self._default_settings = {
+            "server_address": "http://127.0.0.1",
+            "server_port": "8080",
+            "server_path": "/",
+            "query_param_name": "q",
+            "url_encode_query": True,
+            "request_timeout": "5",
+            "custom_url_template": ""
+        }
+        
         # Initialize a fallback logger before super().__init__()
         self._init_fallback_logger()
         
-        # Call parent constructor (may call query method)
+        # Call parent constructor - this should load settings
         super().__init__()
+        
+        # Log what settings we have after super().__init__()
+        self.get_logger().info(f"After super().__init__(), settings attribute exists: {hasattr(self, 'settings')}")
+        if hasattr(self, 'settings'):
+            self.get_logger().info(f"Settings type: {type(self.settings)}")
+            self.get_logger().info(f"Settings content: {self.settings}")
         
         # Resolve icon path after initialization
         self.resolved_default_icon_path = self._resolve_icon_path_static(
@@ -80,99 +97,50 @@ class HttpQueryForwarder(FlowLauncher):
         # Otherwise use our fallback logger
         return self._logger
 
-    @cached_property
-    def settings_path(self) -> Path:
-        """Get the path to the settings file managed by Flow Launcher"""
-        try:
-            # Method 1: Try to go from plugin directory to Flow Launcher root
-            plugin_path = Path(self.plugindir)
-            # Plugin is at: FlowLauncher/Plugins/[PluginFolder]/main.py
-            # Go up to Plugins folder, then to FlowLauncher folder
-            flow_launcher_root = plugin_path.parent.parent
+    def get_settings_dict(self) -> Dict[str, Any]:
+        """Get settings as a dictionary, handling various possible formats"""
+        # First, check if settings exist and what type they are
+        if hasattr(self, 'settings'):
+            settings_value = self.settings
+            self.get_logger().debug(f"Found settings attribute, type: {type(settings_value)}")
             
-            # Check if this looks like the Flow Launcher directory
-            settings_dir = flow_launcher_root / 'Settings' / 'Plugins' / self.__class__.__name__
-            settings_file = settings_dir / 'Settings.json'
+            # If it's already a dict, return it (merged with defaults)
+            if isinstance(settings_value, dict):
+                result = self._default_settings.copy()
+                result.update(settings_value)
+                self.get_logger().debug(f"Settings is dict, merged with defaults: {result}")
+                return result
             
-            self.get_logger().debug(f"Method 1 - Settings path resolved to: {settings_file}")
+            # If it's a string, try to parse it as JSON
+            if isinstance(settings_value, str):
+                try:
+                    parsed = json.loads(settings_value)
+                    if isinstance(parsed, dict):
+                        result = self._default_settings.copy()
+                        result.update(parsed)
+                        self.get_logger().debug(f"Settings was JSON string, parsed and merged: {result}")
+                        return result
+                except json.JSONDecodeError:
+                    self.get_logger().warning(f"Settings is string but not valid JSON: {settings_value}")
             
-            # If the settings directory exists or its parent exists, this is likely correct
-            if settings_file.exists() or settings_dir.exists() or (settings_dir.parent).exists():
-                self.get_logger().info(f"Using settings path (method 1): {settings_file}")
-                return settings_file
-            
-            # Method 2: Try using APPDATA environment variable
-            appdata = os.environ.get('APPDATA')
-            if appdata:
-                settings_file = Path(appdata) / 'FlowLauncher' / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
-                self.get_logger().debug(f"Method 2 - Settings path resolved to: {settings_file}")
-                if settings_file.exists() or settings_file.parent.exists():
-                    self.get_logger().info(f"Using settings path (method 2): {settings_file}")
-                    return settings_file
-            
-            # Method 3: Fallback to user home directory
-            settings_file = Path.home() / 'AppData' / 'Roaming' / 'FlowLauncher' / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
-            self.get_logger().debug(f"Method 3 - Settings path resolved to: {settings_file}")
-            self.get_logger().info(f"Using settings path (method 3 - fallback): {settings_file}")
-            return settings_file
-            
-        except Exception as e:
-            self.get_logger().error(f"Failed to resolve settings path: {e}", exc_info=True)
-            # Last resort fallback
-            return Path.home() / 'AppData' / 'Roaming' / 'FlowLauncher' / 'Settings' / 'Plugins' / self.__class__.__name__ / 'Settings.json'
-
-    @cached_property
-    def settings(self) -> Dict[str, Any]:
-        """Load settings from Flow Launcher's settings file"""
-        default_settings = {
-            "server_address": "http://127.0.0.1",
-            "server_port": "8080",
-            "server_path": "/",
-            "query_param_name": "q",
-            "url_encode_query": True,
-            "request_timeout": "5",
-            "custom_url_template": ""
-        }
+            # If settings has attributes like an object, try to convert to dict
+            if hasattr(settings_value, '__dict__'):
+                try:
+                    settings_dict = vars(settings_value)
+                    result = self._default_settings.copy()
+                    result.update(settings_dict)
+                    self.get_logger().debug(f"Settings was object, converted to dict: {result}")
+                    return result
+                except Exception as e:
+                    self.get_logger().warning(f"Could not convert settings object to dict: {e}")
         
-        try:
-            settings_path = self.settings_path
-            self.get_logger().info(f"Attempting to load settings from: {settings_path}")
-            self.get_logger().info(f"Settings file exists: {settings_path.exists()}")
-            
-            if settings_path.exists():
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    file_content = f.read()
-                    self.get_logger().debug(f"Raw settings file content: {file_content[:500]}")  # Log first 500 chars
-                    
-                    loaded_settings = json.loads(file_content)
-                    
-                    self.get_logger().info(f"Successfully loaded settings: {loaded_settings}")
-                    
-                    # Merge with defaults to ensure all keys exist
-                    for key, default_value in default_settings.items():
-                        if key not in loaded_settings:
-                            loaded_settings[key] = default_value
-                            self.get_logger().debug(f"Added missing key '{key}' with default value: {default_value}")
-                    
-                    return loaded_settings
-            else:
-                self.get_logger().warning(f"Settings file not found at {settings_path}")
-                self.get_logger().warning(f"Parent directory exists: {settings_path.parent.exists()}")
-                if settings_path.parent.exists():
-                    self.get_logger().warning(f"Contents of parent directory: {list(settings_path.parent.iterdir())}")
-                self.get_logger().info("Using default settings")
-                return default_settings
-                
-        except json.JSONDecodeError as e:
-            self.get_logger().error(f"Failed to parse settings JSON: {e}", exc_info=True)
-            return default_settings
-        except Exception as e:
-            self.get_logger().error(f"Failed to load settings: {e}", exc_info=True)
-            return default_settings
+        self.get_logger().warning("No valid settings found, using defaults")
+        return self._default_settings.copy()
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         """Safely get a setting value with fallback"""
-        value = self.settings.get(key, default)
+        settings = self.get_settings_dict()
+        value = settings.get(key, default)
         self.get_logger().debug(f"Getting setting '{key}': {value} (default was: {default})")
         return value
 
@@ -236,6 +204,10 @@ class HttpQueryForwarder(FlowLauncher):
         current_plugindir = getattr(self, 'plugindir', str(Path(__file__).resolve().parent))
 
         logger_to_use.info(f"=== Query started with param: '{param}' ===")
+        
+        # Log all current settings for debugging
+        all_settings = self.get_settings_dict()
+        logger_to_use.info(f"All current settings: {all_settings}")
 
         # Get settings with proper type handling
         server_addr = str(self.get_setting("server_address", "http://localhost"))
