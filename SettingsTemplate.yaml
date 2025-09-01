@@ -1,22 +1,13 @@
 body:
   - type: textBlock
     attributes:
-      description: >
-        Configure your HTTP Query Forwarder plugin to connect to your custom HTTP server.
-        The plugin will forward your queries and display the results returned by the server.
-
-  # Server Configuration Section
-  - type: textBlock
-    attributes:
-      description: >
-        ### Server Configuration
-        Basic server connection settings. These are used when custom URL template is not specified.
+      description: Configure your HTTP Query Forwarder plugin to connect to your custom HTTP server.
 
   - type: input
     attributes:
       name: server_address
       label: "Server Address:"
-      description: "HTTP/HTTPS server address (e.g., http://127.0.0.1 or https://api.example.com)"
+      description: "HTTP/HTTPS server address (e.g., http://176.108.244.147)"
       defaultValue: "http://127.0.0.1"
 
   - type: input
@@ -37,14 +28,8 @@ body:
     attributes:
       name: query_param_name
       label: "Query Parameter Name:"
-      description: "Name of the query parameter to send (e.g., 'q' results in ?q=...)"
+      description: "Name of the query parameter (e.g., 'q' results in ?q=...)"
       defaultValue: "q"
-
-  # Query Options Section
-  - type: textBlock
-    attributes:
-      description: >
-        ### Query Options
 
   - type: checkbox
     attributes:
@@ -60,28 +45,9 @@ body:
       description: "Maximum time to wait for server response"
       defaultValue: "5"
 
-  # Advanced Configuration Section
-  - type: textBlock
-    attributes:
-      description: >
-        ### Advanced Configuration
-        Use a custom URL template to have full control over the request URL format.
-
-        **Template Variables:**
-        - `{query}` - Raw user query
-        - `{encoded_query}` - URL-encoded user query
-        - `{query_param_name}` - The query parameter name configured above
-
-        **Examples:**
-        - `http://localhost:8080/search?q={encoded_query}&lang=en`
-        - `https://api.example.com/v1/query/{encoded_query}`
-        - `https://example.com/echo?text={query}`
-
-        Leave empty to use the basic server configuration above.
-
   - type: textarea
     attributes:
       name: custom_url_template
       label: "Custom URL Template:"
-      description: "Optional: Override URL construction with a custom template"
+      description: "Optional: Use {query} or {encoded_query} for custom URL format"
       defaultValue: ""
